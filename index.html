@@ -1,238 +1,156 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ja">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Test</title>
-    <meta
-      name="description"
-      content="test"
-    />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
-      rel="stylesheet"
-    />
-    <link rel="stylesheet" href="styles.css" />
-  </head>
-  <body>
-    <header class="site-header">
-      <div class="container nav">
-        <a href="#top" class="brand" aria-label="トップへ戻る">
-          <!-- <span class="brand-mark">XXXX</span> -->
-          <div class="brand-copy">
-            <strong>Test page</strong>
-            <span>Static landing page for GitHub Pages</span>
-          </div>
-        </a>
-
-        <button
-          class="menu-toggle"
-          type="button"
-          aria-expanded="false"
-          aria-controls="global-nav"
-          aria-label="メニューを開く"
-        >
-          <span></span>
-          <span></span>
-          <span></span>
-        </button>
-
-        <nav class="nav-links" id="global-nav">
-          <a href="#about">About</a>
-          <a href="#features">Features</a>
-          <a href="#credit">Credit</a>
-          <a href="#contact">Contact</a>
-        </nav>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Rakuten Travel Enricher</title>
+  <meta name="description" content="楽天トラベルAPIで施設名からホテル情報を付与するブラウザツール" />
+  <link rel="stylesheet" href="./styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script defer src="./app.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="hero">
+      <div class="hero__text">
+        <p class="eyebrow">Rakuten Travel API Utility</p>
+        <h1>Hotel Enricher</h1>
+        <p class="hero__lead">
+          CSV / TSV の <code>facilityID</code> と <code>facility_name</code> を読み込み、
+          楽天トラベルの候補検索・施設詳細取得・地域コード取得・空室取得をブラウザ上で実行します。
+        </p>
       </div>
+      <div class="hero__status" id="statusBadges"></div>
     </header>
 
-    <main id="top">
-      <section class="hero">
-        <div class="container hero-grid">
-          <div class="hero-copy reveal">
-            <p class="eyebrow">Designed for learning and deployment</p>
-            <h1>
-              旅の入口を、
-              <br />すっきり美しく。
-            </h1>
-            <p class="lead">
-              test
-            </p>
+    <main class="layout">
+      <section class="panel">
+        <div class="panel__header">
+          <h2>認証と入力</h2>
+          <p>キーは保存しません。ページ上でその都度入力してください。</p>
+        </div>
 
-            <div class="hero-actions">
-              <a class="button primary" href="#features">ページを見る</a>
-              <a
-                class="button secondary"
-                href="https://webservice.rakuten.co.jp/"
-                target="_blank"
-                rel="noreferrer"
-              >
-                楽天Web Service
-              </a>
-            </div>
+        <div class="grid grid--3">
+          <label class="field">
+            <span>applicationId</span>
+            <input id="appId" type="password" autocomplete="off" placeholder="applicationId" />
+          </label>
 
-            <ul class="hero-points">
-              <li>GitHub Pagesにそのまま配置可能</li>
-              <li>あとから検索フォームやAPI連携を追加しやすい</li>
-              <li>学習しやすいようにファイルを役割ごとに分離</li>
-            </ul>
-          </div>
+          <label class="field">
+            <span>accessKey</span>
+            <input id="accessKey" type="password" autocomplete="off" placeholder="accessKey" />
+          </label>
 
-          <div class="hero-panel reveal">
-            <div class="mock-window">
-              <div class="mock-window-bar">
-                <span></span>
-                <span></span>
-                <span></span>
-                <small>preview / rakuten-travel-demo</small>
-              </div>
-              <div class="mock-window-body">
-                <article class="mini-card">
-                  <p class="mini-label">Current use</p>
-                  <h2>Landing Page</h2>
-                  <p>
-                    test
-                  </p>
-                </article>
-                <article class="mini-card accent-card">
-                  <p class="mini-label">Next step</p>
-                  <h2>Hotel Search UI</h2>
-                  <p>
-                    test
-                  </p>
-                </article>
-              </div>
-            </div>
-          </div>
+          <label class="field">
+            <span>affiliateId（任意）</span>
+            <input id="affiliateId" type="password" autocomplete="off" placeholder="affiliateId" />
+          </label>
+        </div>
+
+        <div class="grid grid--4">
+          <label class="field">
+            <span>入力ファイル</span>
+            <input id="fileInput" type="file" accept=".csv,.tsv,text/csv,text/tab-separated-values" />
+          </label>
+
+          <label class="field">
+            <span>ID列名</span>
+            <input id="idCol" type="text" value="facilityID" />
+          </label>
+
+          <label class="field">
+            <span>施設名列名</span>
+            <input id="nameCol" type="text" value="facility_name" />
+          </label>
+
+          <label class="field">
+            <span>テスト件数制限</span>
+            <input id="maxRows" type="number" min="1" placeholder="空欄なら全件" />
+          </label>
         </div>
       </section>
 
-      <section class="section" id="about">
-        <div class="container">
-          <div class="section-heading reveal">
-            <div>
-              <p class="section-kicker">About</p>
-              <h2>まずは信頼感のある公開URLを作る</h2>
+      <section class="panel">
+        <div class="panel__header">
+          <h2>実行オプション</h2>
+          <p>最初は少なめの件数で動作確認してから全件に広げるのがおすすめです。</p>
+        </div>
+
+        <div class="grid grid--4">
+          <label class="field">
+            <span>名前検索の同時実行数</span>
+            <input id="nameConcurrency" type="number" min="1" max="10" value="3" />
+          </label>
+
+          <label class="field">
+            <span>全体レート上限（req / sec）</span>
+            <input id="rps" type="number" min="0.2" step="0.1" value="1.5" />
+          </label>
+
+          <label class="field">
+            <span>未一致候補の保存数</span>
+            <input id="auditTopN" type="number" min="1" max="30" value="10" />
+          </label>
+
+          <label class="field">
+            <span>最大再試行回数</span>
+            <input id="maxRetries" type="number" min="0" max="10" value="4" />
+          </label>
+        </div>
+
+        <div class="grid grid--4">
+          <label class="field field--checkbox">
+            <span>空室情報も取る</span>
+            <label class="checkbox-line">
+              <input id="fetchVacant" type="checkbox" checked />
+              <span>VacantHotelSearch を実行する</span>
+            </label>
+          </label>
+
+          <label class="field">
+            <span>checkinDate</span>
+            <input id="checkinDate" type="date" />
+          </label>
+
+          <label class="field">
+            <span>checkoutDate</span>
+            <input id="checkoutDate" type="date" />
+          </label>
+
+          <div class="field">
+            <span>adultNum / roomNum</span>
+            <div class="inline-fields">
+              <input id="adultNum" type="number" min="1" max="10" value="2" />
+              <input id="roomNum" type="number" min="1" max="10" value="1" />
             </div>
-            <p>
-              test
-            </p>
           </div>
+        </div>
 
-          <div class="info-grid">
-            <article class="info-card reveal">
-              <span class="card-index">01</span>
-              <h3>シンプルな構成</h3>
-              <p>
-                HTMLで骨組み、CSSで見た目、JavaScriptで動きを分けているので、
-                どのファイルが何を担当しているか理解しやすい構成です。
-              </p>
-            </article>
-
-            <article class="info-card reveal">
-              <span class="card-index">02</span>
-              <h3>拡張しやすい土台</h3>
-              <p>
-                今は紹介ページですが、あとから検索フォームや一覧カードを足しても破綻しにくいレイアウトです。
-              </p>
-            </article>
-
-            <article class="info-card reveal">
-              <span class="card-index">03</span>
-              <h3>公開前提の雰囲気</h3>
-              <p>
-                余白、色、角丸、文字サイズのバランスを調整して、学習用でもそのまま公開しやすい見た目にしています。
-              </p>
-            </article>
-          </div>
+        <div class="actions">
+          <button id="runBtn" class="button button--primary">実行する</button>
+          <button id="clearLogBtn" class="button button--ghost">ログを消す</button>
         </div>
       </section>
 
-      <section class="section" id="features">
-        <div class="container">
-          <div class="section-heading reveal">
-            <div>
-              <p class="section-kicker">Features</p>
-              <h2>このあと足しやすい機能</h2>
-            </div>
-            <p>
-              test
-            </p>
-          </div>
-
-          <div class="feature-list">
-            <article class="feature-item reveal">
-              <div>
-                <p class="feature-tag">Step 1</p>
-                <h3>エリア検索フォーム</h3>
-              </div>
-              <p>
-                都道府県やキーワードを入れて検索する導線を追加できます。将来的にはフォーム送信からAPI呼び出しへ接続できます。
-              </p>
-            </article>
-
-            <article class="feature-item reveal">
-              <div>
-                <p class="feature-tag">Step 2</p>
-                <h3>宿一覧カード</h3>
-              </div>
-              <p>
-                画像、宿名、料金帯、所在地、レビューなどを並べるカードUIに発展させやすい設計です。
-              </p>
-            </article>
-
-            <article class="feature-item reveal">
-              <div>
-                <p class="feature-tag">Step 3</p>
-                <h3>空室・詳細情報</h3>
-              </div>
-              <p>
-                詳細ページや空室確認の導線を追加し、最終的には旅行検索サービスの入り口として育てられます。
-              </p>
-            </article>
-          </div>
+      <section class="panel">
+        <div class="panel__header">
+          <h2>進捗</h2>
+          <p>途中経過と最終サマリーを表示します。</p>
         </div>
+
+        <div id="summary" class="summary-card"></div>
+        <pre id="log" class="log-view"></pre>
       </section>
 
-      <section class="section" id="credit">
-        <div class="container">
-          <div class="note-box reveal">
-            <div>
-              <p class="section-kicker">Credit</p>
-              <h2>利用時の注意</h2>
-            </div>
-            <p>
-              test
-            </p>
-          </div>
+      <section class="panel">
+        <div class="panel__header">
+          <h2>出力ファイル</h2>
+          <p>実行後に CSV / JSON をダウンロードできます。</p>
         </div>
-      </section>
 
-      <section class="section" id="contact">
-        <div class="container">
-          <div class="contact-box reveal">
-            <div>
-              <p class="section-kicker">Contact</p>
-              <h2>Project memo</h2>
-            </div>
-            <p>
-              test
-            </p>
-            <a class="text-link" href="mailto:your-name@example.com">your-name@example.com</a>
-          </div>
-        </div>
+        <div id="downloads" class="download-list"></div>
       </section>
     </main>
-
-    <footer class="site-footer">
-      <div class="container footer-inner">
-        <p>© <span id="year"></span> Test page</p>
-        <p>Built for GitHub Pages and frontend practice.</p>
-      </div>
-    </footer>
-
-    <script src="script.js"></script>
-  </body>
+  </div>
+</body>
 </html>
