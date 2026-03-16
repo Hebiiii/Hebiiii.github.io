@@ -17,7 +17,8 @@
         <h1>Hotel Enricher</h1>
         <p class="hero__lead">
           CSV / TSV の <code>facilityID</code> と <code>facility_name</code> を読み込み、
-          楽天トラベルの候補検索・施設詳細取得・地域コード取得・空室取得をブラウザ上で実行します。
+          <code>facilityID</code> を <code>hotelNo</code> として SimpleHotelSearch で照会し、
+          施設詳細取得・地域コード取得・空室取得をブラウザ上で実行します。
         </p>
       </div>
       <div class="hero__status" id="statusBadges"></div>
@@ -78,7 +79,7 @@
 
         <div class="grid grid--4">
           <label class="field">
-            <span>名前検索の同時実行数</span>
+            <span>ID照会の同時実行数</span>
             <input id="nameConcurrency" type="number" min="1" max="10" value="3" />
           </label>
 
