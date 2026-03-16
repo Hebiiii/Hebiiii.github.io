@@ -228,44 +228,37 @@ function extractHotels(responseJson) {
   const hotels = Array.isArray(responseJson?.hotels) ? responseJson.hotels : [];
   const result = [];
 
-  for (const entry of hotels) {
-    if (!entry || typeof entry !== "object") continue;
-    const merged = {};
-
-    if ("hotel" in entry) {
-      const inner = entry.hotel;
-      if (Array.isArray(inner)) {
-        for (const part of inner) {
-          if (part && typeof part === "object") {
-            for (const [key, value] of Object.entries(part)) {
-              if (value && typeof value === "object" && !Array.isArray(value)) {
-                Object.assign(merged, value);
-              } else if (value !== undefined) {
-                merged[key] = value;
-              }
-            }
-          }
-        }
-      } else if (inner && typeof inner === "object") {
-        for (const [key, value] of Object.entries(inner)) {
-          if (value && typeof value === "object" && !Array.isArray(value)) {
-            Object.assign(merged, value);
-          } else if (value !== undefined) {
-            merged[key] = value;
-          }
-        }
+  function deepCollect(node, out) {
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        deepCollect(item, out);
       }
-    } else {
-      for (const [key, value] of Object.entries(entry)) {
-        if (value && typeof value === "object" && !Array.isArray(value)) {
-          Object.assign(merged, value);
-        } else {
-          merged[key] = value;
+      return;
+    }
+
+    if (!node || typeof node !== "object") {
+      return;
+    }
+
+    for (const [key, value] of Object.entries(node)) {
+      if (Array.isArray(value)) {
+        deepCollect(value, out);
+      } else if (value && typeof value === "object") {
+        deepCollect(value, out);
+      } else {
+        if (!(key in out) || out[key] === "" || out[key] == null) {
+          out[key] = value;
         }
       }
     }
+  }
 
-    if (Object.keys(merged).length > 0) {
+  for (const entry of hotels) {
+    const merged = {};
+    deepCollect(entry, merged);
+
+    // ホテル候補として最低限 hotelName か hotelNo のどちらかがあれば採用
+    if (merged.hotelName || merged.hotelNo) {
       result.push(merged);
     }
   }
@@ -573,15 +566,16 @@ async function processOneName(client, hotelName, auditTopN) {
 
   const hotels = extractHotels(response);
 
-  if (response._notFound) {
-    log(`候補なし: ${hotelName}`);
+  if (hotels.length > 0) {
+    console.log("DEBUG hotelName:", hotelName);
+    console.log("DEBUG first candidate raw response:", response.hotels?.[0]);
+    console.log("DEBUG first candidate flattened:", hotels[0]);
   }
 
   const [matched, matchRule] = chooseMatch(hotelName, hotels);
 
   const matchRow = {
     input_hotel_name: hotelName,
-    input_hotel_name_normalized: normalizeName(hotelName),
     candidate_count: hotels.length,
     matched: matched ? 1 : 0,
     match_rule: matchRule || "",
@@ -597,18 +591,16 @@ async function processOneName(client, hotelName, auditTopN) {
 
   const candidateRows = hotels.slice(0, auditTopN).map((candidate, index) => ({
     input_hotel_name: hotelName,
-    input_hotel_name_normalized: normalizeName(hotelName),
     candidate_rank: index + 1,
     candidate_hotelNo: candidate.hotelNo ?? "",
     candidate_hotelName: candidate.hotelName ?? "",
-    candidate_hotelName_normalized: normalizeName(String(candidate.hotelName || "")),
     candidate_areaName: candidate.areaName ?? "",
     candidate_address1: candidate.address1 ?? "",
     candidate_address2: candidate.address2 ?? "",
     candidate_nearestStation: candidate.nearestStation ?? "",
     candidate_reviewAverage: candidate.reviewAverage ?? "",
     candidate_reviewCount: candidate.reviewCount ?? "",
-    candidate_raw_json: JSON.stringify(summarizeCandidate(candidate)),
+    candidate_raw_json: JSON.stringify(candidate),
   }));
 
   return { matchRow, candidateRows };
