@@ -529,6 +529,9 @@ class RakutenBrowserClient {
     const m = String(message).match(/try again in\s+(\d+)\s+seconds?/i);
     if (m) return Number(m[1]);
 
+    const jp = String(message).match(/(\d+)\s*秒/);
+    if (jp) return Number(jp[1]);
+
     return 2;
   }
 
@@ -633,54 +636,46 @@ async function parseInputFile(file) {
   });
 }
 
-async function processOneName(client, hotelName, auditTopN) {
-  const keywordVariants = buildKeywordVariants(hotelName);
-  if (keywordVariants.length > 1) {
-    log(
-      `キーワード長超過のため分割検索: ${keywordVariants
-        .map((keyword) => `"${keyword}"`)
-        .join(" -> ")}`
-    );
+async function processOneFacilityId(client, facilityId, auditTopN) {
+  const hotelNo = String(facilityId || "").trim();
+  if (!hotelNo) {
+    return {
+      matchRow: {
+        input_facility_id: "",
+        candidate_count: 0,
+        matched: 0,
+        match_rule: "",
+        rakuten_hotelNo: "",
+        rakuten_hotelName: "",
+        rakuten_areaName: "",
+        rakuten_address1: "",
+        rakuten_address2: "",
+        rakuten_nearestStation: "",
+        rakuten_reviewAverage: "",
+        rakuten_reviewCount: "",
+      },
+      candidateRows: [],
+      matchedHotel: null,
+    };
   }
 
-  const hotelMap = new Map();
-  let matched = null;
-  let matchRule = null;
-  let matchedKeyword = "";
+  const response = await client.getJson("simple_hotel_search_by_facility_id", ENDPOINTS.simple, {
+    hotelNo,
+    responseType: "large",
+    hits: 30,
+    page: 1,
+  });
 
-  for (const keyword of keywordVariants) {
-    const response = await client.getJson("keyword_hotel_search", ENDPOINTS.keyword, {
-      keyword,
-      searchField: 1,
-      hits: 30,
-      page: 1,
-      responseType: "large",
-    });
-
-    const hotels = extractHotels(response);
-    for (const hotel of hotels) {
-      const key = String(hotel.hotelNo ?? hotel.hotelName ?? JSON.stringify(hotel));
-      if (!hotelMap.has(key)) {
-        hotelMap.set(key, hotel);
-      }
-    }
-
-    const allHotels = Array.from(hotelMap.values());
-    [matched, matchRule] = chooseMatch(hotelName, allHotels);
-    if (matched) {
-      matchedKeyword = keyword;
-      break;
-    }
-  }
-
-  const hotels = Array.from(hotelMap.values());
+  const hotels = extractHotels(response);
+  const matched =
+    hotels.find((hotel) => String(hotel.hotelNo ?? "").trim() === hotelNo) ||
+    (hotels.length === 1 ? hotels[0] : null);
 
   const matchRow = {
-    input_hotel_name: hotelName,
-    search_keyword: matchedKeyword || keywordVariants[0] || "",
+    input_facility_id: hotelNo,
     candidate_count: hotels.length,
     matched: matched ? 1 : 0,
-    match_rule: matchRule || "",
+    match_rule: matched ? "facility_id_hotelNo" : "",
     rakuten_hotelNo: matched?.hotelNo ?? "",
     rakuten_hotelName: matched?.hotelName ?? "",
     rakuten_areaName: matched?.areaName ?? "",
@@ -692,7 +687,7 @@ async function processOneName(client, hotelName, auditTopN) {
   };
 
   const candidateRows = hotels.slice(0, auditTopN).map((candidate, index) => ({
-    input_hotel_name: hotelName,
+    input_facility_id: hotelNo,
     candidate_rank: index + 1,
     candidate_hotelNo: candidate.hotelNo ?? "",
     candidate_hotelName: candidate.hotelName ?? "",
@@ -705,7 +700,7 @@ async function processOneName(client, hotelName, auditTopN) {
     candidate_raw_json: JSON.stringify(candidate),
   }));
 
-  return { matchRow, candidateRows };
+  return { matchRow, candidateRows, matchedHotel: matched || null };
 }
 
 async function batchSimpleDetails(client, hotelNos) {
@@ -846,53 +841,66 @@ async function runPipeline() {
 
   const inputRows = rows.map((row) => ({
     ...row,
-    facilityID: row[idCol] ?? "",
-    facility_name: row[nameCol] ?? "",
+    facilityID: String(row[idCol] ?? "").trim(),
+    facility_name: String(row[nameCol] ?? "").trim(),
   }));
 
-  const uniqueNames = [
+  const uniqueFacilityIds = [
     ...new Set(
       inputRows
-        .map((row) => String(row.facility_name || "").trim())
+        .map((row) => String(row.facilityID || "").trim())
         .filter(Boolean)
     ),
   ];
 
   log(`入力行数: ${inputRows.length}`);
-  log(`ユニーク施設名数: ${uniqueNames.length}`);
+  log(`ユニーク facilityID 数: ${uniqueFacilityIds.length}`);
 
   const limit = pLimit(nameConcurrency);
   const matchRows = [];
   const candidateRows = [];
+  const matchedHotelDetailMap = new Map();
   let processed = 0;
 
-  log("KeywordHotelSearch を開始します。");
+  log("facilityID を hotelNo として SimpleHotelSearch を開始します。");
 
   await Promise.all(
-    uniqueNames.map((hotelName) =>
+    uniqueFacilityIds.map((facilityId) =>
       limit(async () => {
-        const { matchRow, candidateRows: candidates } = await processOneName(
+        const { matchRow, candidateRows: candidates, matchedHotel } = await processOneFacilityId(
           client,
-          hotelName,
+          facilityId,
           auditTopN
         );
         matchRows.push(matchRow);
         candidateRows.push(...candidates);
+
+        const matchedHotelNo = String(matchedHotel?.hotelNo ?? "").trim();
+        if (matchedHotelNo) {
+          matchedHotelDetailMap.set(
+            matchedHotelNo,
+            flattenForCsv({
+              ...matchedHotel,
+              rakuten_hotelNo: matchedHotelNo,
+            })
+          );
+        }
+
         processed++;
 
-        if (processed % 10 === 0 || processed === uniqueNames.length) {
-          log(`名前検索進捗 ${processed}/${uniqueNames.length}`);
+        if (processed % 10 === 0 || processed === uniqueFacilityIds.length) {
+          log(`ID照会進捗 ${processed}/${uniqueFacilityIds.length}`);
         }
       })
     )
   );
 
   const unmatchedRows = matchRows.filter((row) => Number(row.matched) === 0);
-  const matchMap = new Map(matchRows.map((row) => [String(row.input_hotel_name), row]));
+  const matchMap = new Map(matchRows.map((row) => [String(row.input_facility_id), row]));
 
   const inputWithMatch = inputRows.map((row) => ({
     ...row,
-    ...(matchMap.get(String(row.facility_name)) || {}),
+    ...(matchMap.get(String(row.facilityID)) || {}),
   }));
 
   const matchedHotelNos = [
@@ -903,8 +911,8 @@ async function runPipeline() {
     ),
   ];
 
-  log(`マッチしたユニーク施設名: ${matchRows.filter((row) => Number(row.matched) === 1).length}`);
-  log(`未一致ユニーク施設名: ${unmatchedRows.length}`);
+  log(`マッチしたユニーク facilityID: ${matchRows.filter((row) => Number(row.matched) === 1).length}`);
+  log(`未一致ユニーク facilityID: ${unmatchedRows.length}`);
   log(`ユニーク rakuten_hotelNo 数: ${matchedHotelNos.length}`);
 
   log("GetAreaClass を取得します。");
@@ -914,7 +922,25 @@ async function runPipeline() {
   let inputWithDetails = inputWithMatch;
 
   if (matchedHotelNos.length > 0) {
-    hotelDetails = await batchSimpleDetails(client, matchedHotelNos);
+    const missingHotelNos = matchedHotelNos.filter((hotelNo) => !matchedHotelDetailMap.has(hotelNo));
+    const fetchedMissingHotelDetails =
+      missingHotelNos.length > 0 ? await batchSimpleDetails(client, missingHotelNos) : [];
+
+    hotelDetails = [
+      ...matchedHotelNos
+        .map((hotelNo) => matchedHotelDetailMap.get(hotelNo))
+        .filter(Boolean),
+      ...fetchedMissingHotelDetails,
+    ];
+
+    if (missingHotelNos.length > 0) {
+      log(
+        `SimpleHotelSearch 詳細の追加取得: ${missingHotelNos.length} 件（初回ID照会で不足した分のみ）`
+      );
+    } else {
+      log("SimpleHotelSearch 詳細取得は初回ID照会結果を再利用しました。");
+    }
+
     const detailMap = new Map(
       hotelDetails.map((row) => [String(row.rakuten_hotelNo || ""), row])
     );
@@ -939,9 +965,9 @@ async function runPipeline() {
 
   const summary = {
     input_rows: inputRows.length,
-    unique_input_hotel_names: uniqueNames.length,
-    matched_unique_names: matchRows.filter((row) => Number(row.matched) === 1).length,
-    unmatched_unique_names: unmatchedRows.length,
+    unique_input_facility_ids: uniqueFacilityIds.length,
+    matched_unique_facility_ids: matchRows.filter((row) => Number(row.matched) === 1).length,
+    unmatched_unique_facility_ids: unmatchedRows.length,
     matched_unique_rakuten_hotelNos: matchedHotelNos.length,
     hotel_details_rows: hotelDetails.length,
     vacant_rows: vacantRows.length,
@@ -950,9 +976,9 @@ async function runPipeline() {
 
   setSummary(summary);
 
-  createCsvDownload("01_name_match_results.csv", matchRows);
+  createCsvDownload("01_facility_id_match_results.csv", matchRows);
   createCsvDownload("02_candidate_audit.csv", candidateRows);
-  createCsvDownload("03_unmatched_names.csv", unmatchedRows);
+  createCsvDownload("03_unmatched_facility_ids.csv", unmatchedRows);
   createCsvDownload("04_input_with_rakuten_match.csv", inputWithMatch);
   createJsonDownload("05_area_classes_raw.json", areaJson);
   createCsvDownload("06_area_classes_flat.csv", areaFlatRows);
