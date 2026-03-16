@@ -5,6 +5,8 @@ const ENDPOINTS = {
   area: "https://openapi.rakuten.co.jp/engine/api/Travel/GetAreaClass/20140210",
 };
 
+const KEYWORD_MAX_LENGTH = 40;
+
 const $ = (id) => document.getElementById(id);
 
 const ui = {
@@ -179,6 +181,61 @@ function canonicalizeForExactMatch(name) {
     .normalize("NFKC")
     .replace(/\u3000/g, " ")
     .trim();
+}
+
+function clipKeyword(text, maxLength = KEYWORD_MAX_LENGTH) {
+  const source = String(text || "").trim();
+  if (source.length <= maxLength) return source;
+
+  const head = source.slice(0, maxLength);
+  const boundaryChars = /[\s　\-ｰー‐―／/・･,:：;；()（）\[\]【】]/;
+
+  for (let i = head.length - 1; i >= 0; i--) {
+    if (boundaryChars.test(head[i])) {
+      const clipped = head.slice(0, i).trim();
+      if (clipped.length >= Math.min(20, maxLength)) {
+        return clipped;
+      }
+    }
+  }
+
+  return head.trim();
+}
+
+function buildKeywordVariants(inputName) {
+  const raw = String(inputName || "").trim();
+  if (!raw) return [""];
+
+  if (raw.length <= KEYWORD_MAX_LENGTH) {
+    return [raw];
+  }
+
+  const variants = [];
+  const seen = new Set();
+  const push = (value) => {
+    const keyword = String(value || "").trim();
+    if (!keyword || keyword.length > KEYWORD_MAX_LENGTH || seen.has(keyword)) return;
+    seen.add(keyword);
+    variants.push(keyword);
+  };
+
+  push(clipKeyword(raw));
+  push(raw.slice(0, KEYWORD_MAX_LENGTH).trim());
+
+  const tokens = raw.split(/[\s　]+/).filter(Boolean);
+  if (tokens.length >= 2) {
+    let tokenHead = "";
+    for (const token of tokens) {
+      const next = tokenHead ? `${tokenHead} ${token}` : token;
+      if (next.length > KEYWORD_MAX_LENGTH) break;
+      tokenHead = next;
+    }
+    push(tokenHead);
+  }
+
+  push(raw.slice(-KEYWORD_MAX_LENGTH).trim());
+
+  return variants.length ? variants : [raw.slice(0, KEYWORD_MAX_LENGTH).trim()];
 }
 
 function chunkArray(arr, size) {
@@ -577,26 +634,50 @@ async function parseInputFile(file) {
 }
 
 async function processOneName(client, hotelName, auditTopN) {
-  const response = await client.getJson("keyword_hotel_search", ENDPOINTS.keyword, {
-    keyword: hotelName,
-    searchField: 1,
-    hits: 30,
-    page: 1,
-    responseType: "large",
-  });
-
-  const hotels = extractHotels(response);
-
-  if (hotels.length > 0) {
-    console.log("DEBUG hotelName:", hotelName);
-    console.log("DEBUG first candidate raw response:", response.hotels?.[0]);
-    console.log("DEBUG first candidate flattened:", hotels[0]);
+  const keywordVariants = buildKeywordVariants(hotelName);
+  if (keywordVariants.length > 1) {
+    log(
+      `キーワード長超過のため分割検索: ${keywordVariants
+        .map((keyword) => `"${keyword}"`)
+        .join(" -> ")}`
+    );
   }
 
-  const [matched, matchRule] = chooseMatch(hotelName, hotels);
+  const hotelMap = new Map();
+  let matched = null;
+  let matchRule = null;
+  let matchedKeyword = "";
+
+  for (const keyword of keywordVariants) {
+    const response = await client.getJson("keyword_hotel_search", ENDPOINTS.keyword, {
+      keyword,
+      searchField: 1,
+      hits: 30,
+      page: 1,
+      responseType: "large",
+    });
+
+    const hotels = extractHotels(response);
+    for (const hotel of hotels) {
+      const key = String(hotel.hotelNo ?? hotel.hotelName ?? JSON.stringify(hotel));
+      if (!hotelMap.has(key)) {
+        hotelMap.set(key, hotel);
+      }
+    }
+
+    const allHotels = Array.from(hotelMap.values());
+    [matched, matchRule] = chooseMatch(hotelName, allHotels);
+    if (matched) {
+      matchedKeyword = keyword;
+      break;
+    }
+  }
+
+  const hotels = Array.from(hotelMap.values());
 
   const matchRow = {
     input_hotel_name: hotelName,
+    search_keyword: matchedKeyword || keywordVariants[0] || "",
     candidate_count: hotels.length,
     matched: matched ? 1 : 0,
     match_rule: matchRule || "",
