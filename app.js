@@ -154,11 +154,31 @@ function escapeHtml(str) {
 
 function normalizeName(name) {
   if (name == null) return "";
-  let s = String(name).normalize("NFKC").trim().toLowerCase();
+  let s = String(name)
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .normalize("NFKC")
+    .trim()
+    .toLowerCase();
   s = s.replace(/\u3000/g, " ");
   s = s.replace(/\s+/g, "");
   s = s.replace(/[‐-‒–—―ーｰ_/・･.,，、。:：;；'"“”‘’`´~〜!！?？()\[\]{}（）【】<>＜＞]/g, "");
   return s;
+}
+
+function decodeHtmlEntities(text) {
+  if (text == null) return "";
+  const textarea = document.createElement("textarea");
+  textarea.innerHTML = String(text);
+  return textarea.value;
+}
+
+function canonicalizeForExactMatch(name) {
+  if (name == null) return "";
+  return decodeHtmlEntities(String(name))
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .normalize("NFKC")
+    .replace(/\u3000/g, " ")
+    .trim();
 }
 
 function chunkArray(arr, size) {
@@ -184,8 +204,9 @@ function flattenForCsv(record) {
 }
 
 function chooseMatch(inputName, candidates) {
+  const canonicalInput = canonicalizeForExactMatch(inputName);
   const exact = candidates.filter(
-    (candidate) => String(candidate.hotelName || "").trim() === String(inputName).trim()
+    (candidate) => canonicalizeForExactMatch(candidate.hotelName) === canonicalInput
   );
   if (exact.length === 1) return [exact[0], "exact"];
   if (exact.length > 1) return [exact[0], "exact_multiple"];
