@@ -407,6 +407,7 @@ class RakutenBrowserClient {
     this.maxRetries = maxRetries;
     this.rateLimiter = new RateLimiter(rps);
     this.cache = new Map();
+    this.globalCooldownUntil = 0;
   }
 
   buildQuery(params) {
@@ -428,6 +429,38 @@ class RakutenBrowserClient {
     return query;
   }
 
+  async waitGlobalCooldown() {
+    const now = Date.now();
+    if (now < this.globalCooldownUntil) {
+      const ms = this.globalCooldownUntil - now;
+      log(`レート制限待機中: ${Math.ceil(ms / 1000)} 秒`, "error");
+      await sleep(ms);
+    }
+  }
+
+  setGlobalCooldown(ms) {
+    const until = Date.now() + ms;
+    this.globalCooldownUntil = Math.max(this.globalCooldownUntil, until);
+  }
+
+  parseRetrySeconds(response, data, text) {
+    const retryAfter = response.headers.get("Retry-After");
+    if (retryAfter && !Number.isNaN(Number(retryAfter))) {
+      return Number(retryAfter);
+    }
+
+    const message =
+      data?.message ||
+      data?.error_description ||
+      text ||
+      "";
+
+    const m = String(message).match(/try again in\s+(\d+)\s+seconds?/i);
+    if (m) return Number(m[1]);
+
+    return 2;
+  }
+
   async getJson(endpointName, url, params = {}) {
     const cacheKey = `${endpointName}::${JSON.stringify(params)}`;
     if (this.cache.has(cacheKey)) {
@@ -438,6 +471,7 @@ class RakutenBrowserClient {
     let lastError = null;
 
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      await this.waitGlobalCooldown();
       await this.rateLimiter.wait();
 
       try {
@@ -456,8 +490,42 @@ class RakutenBrowserClient {
           data = { rawText: text };
         }
 
+        // 404 = データなしとして扱う
+        if (response.status === 404) {
+          const emptyResult = {
+            pagingInfo: {
+              recordCount: 0,
+              pageCount: 0,
+              page: 1,
+              first: 0,
+              last: 0,
+            },
+            hotels: [],
+            _notFound: true,
+          };
+          this.cache.set(cacheKey, emptyResult);
+          return emptyResult;
+        }
+
+        // 429 = 全体待機して再試行
+        if (response.status === 429) {
+          const retrySeconds = this.parseRetrySeconds(response, data, text);
+          const waitMs = (retrySeconds + 0.5) * 1000; // 少し余裕を持つ
+          this.setGlobalCooldown(waitMs);
+
+          if (attempt < this.maxRetries) {
+            log(
+              `[${endpointName}] 429: ${retrySeconds} 秒待って再試行します`,
+              "error"
+            );
+            continue;
+          }
+        }
+
         if (!response.ok) {
-          throw new Error(`[${endpointName}] HTTP ${response.status} ${JSON.stringify(data).slice(0, 1200)}`);
+          throw new Error(
+            `[${endpointName}] HTTP ${response.status} ${JSON.stringify(data).slice(0, 1200)}`
+          );
         }
 
         this.cache.set(cacheKey, data);
@@ -465,7 +533,7 @@ class RakutenBrowserClient {
       } catch (error) {
         lastError = error;
         if (attempt < this.maxRetries) {
-          const waitMs = Math.min(8000, 700 * (attempt + 1));
+          const waitMs = Math.min(8000, 1000 * (attempt + 1));
           log(`再試行 ${attempt + 1}/${this.maxRetries}: ${error.message}`, "error");
           await sleep(waitMs);
         }
@@ -504,6 +572,11 @@ async function processOneName(client, hotelName, auditTopN) {
   });
 
   const hotels = extractHotels(response);
+
+  if (response._notFound) {
+    log(`候補なし: ${hotelName}`);
+  }
+
   const [matched, matchRule] = chooseMatch(hotelName, hotels);
 
   const matchRow = {
