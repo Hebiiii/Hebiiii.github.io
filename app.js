@@ -529,6 +529,9 @@ class RakutenBrowserClient {
     const m = String(message).match(/try again in\s+(\d+)\s+seconds?/i);
     if (m) return Number(m[1]);
 
+    const jp = String(message).match(/(\d+)\s*秒/);
+    if (jp) return Number(jp[1]);
+
     return 2;
   }
 
@@ -652,6 +655,7 @@ async function processOneFacilityId(client, facilityId, auditTopN) {
         rakuten_reviewCount: "",
       },
       candidateRows: [],
+      matchedHotel: null,
     };
   }
 
@@ -696,7 +700,7 @@ async function processOneFacilityId(client, facilityId, auditTopN) {
     candidate_raw_json: JSON.stringify(candidate),
   }));
 
-  return { matchRow, candidateRows };
+  return { matchRow, candidateRows, matchedHotel: matched || null };
 }
 
 async function batchSimpleDetails(client, hotelNos) {
@@ -855,6 +859,7 @@ async function runPipeline() {
   const limit = pLimit(nameConcurrency);
   const matchRows = [];
   const candidateRows = [];
+  const matchedHotelDetailMap = new Map();
   let processed = 0;
 
   log("facilityID を hotelNo として SimpleHotelSearch を開始します。");
@@ -862,13 +867,25 @@ async function runPipeline() {
   await Promise.all(
     uniqueFacilityIds.map((facilityId) =>
       limit(async () => {
-        const { matchRow, candidateRows: candidates } = await processOneFacilityId(
+        const { matchRow, candidateRows: candidates, matchedHotel } = await processOneFacilityId(
           client,
           facilityId,
           auditTopN
         );
         matchRows.push(matchRow);
         candidateRows.push(...candidates);
+
+        const matchedHotelNo = String(matchedHotel?.hotelNo ?? "").trim();
+        if (matchedHotelNo) {
+          matchedHotelDetailMap.set(
+            matchedHotelNo,
+            flattenForCsv({
+              ...matchedHotel,
+              rakuten_hotelNo: matchedHotelNo,
+            })
+          );
+        }
+
         processed++;
 
         if (processed % 10 === 0 || processed === uniqueFacilityIds.length) {
@@ -905,7 +922,25 @@ async function runPipeline() {
   let inputWithDetails = inputWithMatch;
 
   if (matchedHotelNos.length > 0) {
-    hotelDetails = await batchSimpleDetails(client, matchedHotelNos);
+    const missingHotelNos = matchedHotelNos.filter((hotelNo) => !matchedHotelDetailMap.has(hotelNo));
+    const fetchedMissingHotelDetails =
+      missingHotelNos.length > 0 ? await batchSimpleDetails(client, missingHotelNos) : [];
+
+    hotelDetails = [
+      ...matchedHotelNos
+        .map((hotelNo) => matchedHotelDetailMap.get(hotelNo))
+        .filter(Boolean),
+      ...fetchedMissingHotelDetails,
+    ];
+
+    if (missingHotelNos.length > 0) {
+      log(
+        `SimpleHotelSearch 詳細の追加取得: ${missingHotelNos.length} 件（初回ID照会で不足した分のみ）`
+      );
+    } else {
+      log("SimpleHotelSearch 詳細取得は初回ID照会結果を再利用しました。");
+    }
+
     const detailMap = new Map(
       hotelDetails.map((row) => [String(row.rakuten_hotelNo || ""), row])
     );
